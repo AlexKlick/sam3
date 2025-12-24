@@ -3,8 +3,15 @@
 """Triton kernel for euclidean distance transform (EDT)"""
 
 import torch
-import triton
-import triton.language as tl
+
+try:
+    import triton
+    import triton.language as tl
+except ImportError:
+    triton = None
+    tl = None
+import numpy as np
+import cv2
 
 """
 Disclaimer: This implementation is not meant to be extremely efficient. A CUDA kernel would likely be more efficient.
@@ -50,7 +57,13 @@ Overall, despite being quite naive, this implementation is roughly 5.5x faster t
 """
 
 
-@triton.jit
+def optional_triton_jit(fn):
+    if triton is not None:
+        return triton.jit(fn)
+    return fn
+
+
+@optional_triton_jit
 def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.constexpr):
     # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
     # It can be applied horizontally or vertically depending if we're doing the first or second stage.
@@ -125,7 +138,29 @@ def edt_triton(data: torch.Tensor):
         A tensor of the same shape as data containing the EDT.
         It should be equivalent to a batched version of cv2.distanceTransform(input, cv2.DIST_L2, 0)
     """
-    assert data.dim() == 3
+    if not data.is_cuda:
+        # CPU Fallback using OpenCV
+        B, H, W = data.shape
+        # data is a boolean mask where True means object (foreground)
+        # cv2.distanceTransform needs binary image where 0 is background (distance target)
+        # and 1/255 is foreground.
+        # But wait, distanceTransform calculates distance to zero pixels.
+        # If we want distance to closest zero pixel, we should invert.
+        # Original logic: Row_EDT[i,j] = min_k (sqrt((k-j)^2) if input[i,k]==0 else +infinity)
+        # So we want distance to 0 pixels.
+
+        # Convert to numpy and then back to torch
+        results = []
+        for i in range(B):
+            mask = data[i].cpu().numpy().astype(np.uint8)
+            # mask: 0 -> distance target, 1 -> foreground
+            # cv2.distanceTransform calculates distance to 0 pixels.
+            dist = cv2.distanceTransform(mask, cv2.DIST_L2, 0)
+            results.append(torch.from_numpy(dist))
+
+        return torch.stack(results).to(data.device)
+
+    assert triton is not None, "Triton is required for GPU EDT"
     assert data.is_cuda
     B, H, W = data.shape
     data = data.contiguous()

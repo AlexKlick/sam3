@@ -581,10 +581,16 @@ def build_sam3_image_model(
     Returns:
         A SAM3 image model
     """
-    if bpe_path is None:
-        bpe_path = pkg_resources.resource_filename(
-            "sam3", "assets/bpe_simple_vocab_16e6.txt.gz"
-        )
+    # bpe_path = pkg_resources.resource_filename(
+    #     "sam3", "assets/bpe_simple_vocab_16e6.txt.gz"
+    # )
+    # Hardcoded path workaround due to pkg_resources issue
+    import os
+
+    bpe_path = os.path.join(
+        r"C:\Users\aklic\.gemini\antigravity\sam\sam3\sam3\assets",
+        "bpe_simple_vocab_16e6.txt.gz",
+    )
 
     # Create visual components
     compile_mode = "default" if compile else None
